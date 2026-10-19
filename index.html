@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>شو الأغنية؟ غنّي وأنا بعرفها</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f4f2fb;--ink:#1d1b3a;--mute:#6b6890;--card:#fff;--line:#dcd8ef;--acc:#d6246e;--accsoft:#fbdbe8}
+@media (prefers-color-scheme:dark){:root{--bg:#141230;--ink:#efecff;--mute:#9f9bc8;--card:#1e1b45;--line:#34306b;--acc:#ff5a9a;--accsoft:#4a1f3d;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Tajawal',system-ui,'Segoe UI',Tahoma,sans-serif;line-height:1.6;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:560px;margin:0 auto;padding:28px 18px 40px}
+h1{font-size:30px;font-weight:800;margin:0 0 4px}
+p.sub{margin:0 0 22px;color:var(--mute)}
+.stage{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px}
+canvas{width:100%;height:110px;display:block}
+.note{display:flex;justify-content:space-between;align-items:center;margin:8px 2px 14px;color:var(--mute);font-size:15px}
+.note b{font-size:22px;color:var(--ink);direction:ltr}
+button{width:100%;font:inherit;font-weight:800;font-size:20px;border:0;border-radius:14px;padding:14px;background:var(--acc);color:#fff;cursor:pointer}
+button.rec{background:var(--ink);color:var(--bg)}
+button:focus-visible,a:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+#st{margin:14px 2px 0;color:var(--mute);font-size:15px;min-height:1.6em}
+h2{font-size:18px;margin:22px 0 10px}
+ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+li{position:relative;overflow:hidden;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+li .bar{position:absolute;inset:0 auto 0 0;background:var(--accsoft);z-index:0;transition:width .4s}
+li>*{position:relative;z-index:1}
+li .t{font-weight:700;display:block}li .e{display:block;font-size:14px;color:var(--mute)}
+li .r{text-align:left;direction:ltr;flex-shrink:0}
+li .p{font-weight:800;display:block}
+li a{font-size:13px;font-weight:700;color:var(--acc);margin-inline-start:8px;text-decoration:none}
+li:first-child{border-color:var(--acc)}
+.empty{color:var(--mute);padding:14px;border:1px dashed var(--line);border-radius:12px;text-align:center}
+</style>
+</head>
+<body>
+<main>
+<h1>غنّي، وأنا بعرف الأغنية</h1>
+<p class="sub">اضغط تسجيل ودندن أو غنّي مقطع من أي أغنية، عربي أو أجنبي. الأفضل 10 ثواني أو أكثر.</p>
+<div class="stage">
+  <canvas id="cv" width="520" height="110" aria-label="خط طبقة الصوت"></canvas>
+  <div class="note"><span>النغمة الحالية</span><b id="nn">—</b></div>
+  <button id="btn" type="button">ابدأ التسجيل</button>
+  <div id="st" aria-live="polite"></div>
+</div>
+<h2 id="ttl">أقرب ٥ أغاني</h2>
+<ol id="list" aria-live="polite"><div class="empty">ابدأ الغناء وبتظهر النتائج هون</div></ol>
+</main>
+<script>
+const $=id=>document.getElementById(id),cv=$('cv'),cx=cv.getContext('2d');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+let ctx,stream,an,proc,chunks=[],total=0,raw=[],on=false,sid=0,busy=false,t1,t2,sr=44100;
+
+function detect(buf,s){let e=0;for(let i=0;i<buf.length;i++)e+=buf[i]*buf[i];if(Math.sqrt(e/buf.length)<0.012)return -1;
+ const n=buf.length,lo=Math.floor(s/1000),hi=Math.floor(s/80),r=new Float32Array(hi+2);let mx=0;
+ for(let l=lo;l<=hi;l++){let a=0,b=0,c=0;for(let i=0;i<n-l;i++){a+=buf[i]*buf[i+l];b+=buf[i]*buf[i];c+=buf[i+l]*buf[i+l]}r[l]=2*a/(b+c+1e-9);if(r[l]>mx)mx=r[l]}
+ if(mx<0.6)return -1;for(let l=lo+1;l<hi;l++){if(r[l]>=0.9*mx&&r[l]>=r[l-1]&&r[l]>=r[l+1])return s/l}return -1}
+function draw(){const w=cv.width,h=cv.height,css=getComputedStyle(document.documentElement);cx.clearRect(0,0,w,h);
+ cx.strokeStyle=css.getPropertyValue('--line');for(let i=1;i<4;i++){cx.beginPath();cx.moveTo(0,h*i/4);cx.lineTo(w,h*i/4);cx.stroke()}
+ const v=raw.slice(-160),ok=v.filter(x=>x!==null);if(ok.length<2)return;const mn=Math.min(...ok)-2,rg=Math.max(12,Math.max(...ok)+2-mn);
+ cx.strokeStyle=css.getPropertyValue('--acc');cx.lineWidth=3;cx.lineJoin='round';cx.beginPath();let pen=false;
+ v.forEach((x,i)=>{if(x===null){pen=false;return}const X=w-(v.length-1-i)*(w/160),Y=h-6-(x-mn)/rg*(h-12);pen?cx.lineTo(X,Y):cx.moveTo(X,Y);pen=true});cx.stroke()}
+
+function wav(sec){const need=Math.min(total,Math.floor(sec*sr));let got=0;const part=[];
+ for(let i=chunks.length-1;i>=0&&got<need;i--){part.unshift(chunks[i]);got+=chunks[i].length}
+ const all=new Float32Array(got);let o=0;part.forEach(c=>{all.set(c,o);o+=c.length});
+ const src=all.subarray(Math.max(0,got-need)),r=sr/16000,n=Math.floor(src.length/r),pcm=new Int16Array(n);
+ for(let i=0;i<n;i++){const a=Math.floor(i*r),b=Math.max(a+1,Math.floor((i+1)*r));let s=0;for(let j=a;j<b;j++)s+=src[j];s/=(b-a);pcm[i]=Math.max(-1,Math.min(1,s))*32767}
+ const buf=new ArrayBuffer(44+n*2),d=new DataView(buf),W=(p,t)=>{for(let i=0;i<t.length;i++)d.setUint8(p+i,t.charCodeAt(i))};
+ W(0,'RIFF');d.setUint32(4,36+n*2,true);W(8,'WAVE');W(12,'fmt ');d.setUint32(16,16,true);d.setUint16(20,1,true);d.setUint16(22,1,true);
+ d.setUint32(24,16000,true);d.setUint32(28,32000,true);d.setUint16(32,2,true);d.setUint16(34,16,true);W(36,'data');d.setUint32(40,n*2,true);
+ new Int16Array(buf,44).set(pcm);return new Blob([buf],{type:'audio/wav'})}
+
+function render(list,final){$('ttl').textContent=final?'النتيجة النهائية: أقرب ٥ أغاني':'أقرب ٥ أغاني (مباشر)';
+ $('list').innerHTML=list.map(s=>{const l=[['Spotify',s.spotify],['YouTube',s.youtube],['Deezer',s.deezer]].filter(x=>x[1]).map(x=>`<a href="${x[1]}" target="_blank" rel="noopener">${x[0]}</a>`).join('');
+ return `<li><div class="bar" style="width:${s.score}%"></div><span><span class="t">${esc(s.title)}</span><span class="e">${esc(s.artist)}</span></span><span class="r"><span class="p">${s.score}%</span>${l}</span></li>`}).join('')}
+async function ask(final){if(busy&&!final)return;const my=sid;busy=true;$('st').textContent=final?'جاري تحليل التسجيل كامل…':'جاري التحليل…';
+ try{const r=await fetch('/api/identify',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:wav(final?20:15)});const j=await r.json();
+  if(my!==sid||(!final&&!on))return;
+  if(j.error){$('st').textContent=j.error;return}
+  if(j.results.length){render(j.results,final);$('st').textContent=on?'مستمر بالاستماع… كمّل غناء':''}
+  else{$('st').textContent=final?'':'لسا ما تعرّفت. كمّل غناء أو غنّي أوضح.';if(final)$('list').innerHTML='<div class="empty">ما قدرت أتعرف على الأغنية. جرّب تغني مقطع أطول وأوضح وقريب من الميكروفون.</div>'}
+ }catch(e){if(my===sid)$('st').textContent='تعذّر الاتصال بالخادم. تأكد من اتصال الإنترنت.'}
+ finally{if(my===sid)busy=false}}
+
+async function start(){
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){$('st').textContent='المتصفح ما بسمح بالميكروفون. افتح الصفحة من رابط https في Chrome أو Safari.';return}
+ try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:true}})}
+ catch(e){$('st').textContent='الميكروفون ممنوع. اسمح له من أيقونة القفل بجنب الرابط وجرّب مرة ثانية ('+e.name+')';return}
+ ctx=new (window.AudioContext||window.webkitAudioContext)();sr=ctx.sampleRate;
+ const src=ctx.createMediaStreamSource(stream);an=ctx.createAnalyser();an.fftSize=2048;src.connect(an);
+ proc=ctx.createScriptProcessor(4096,1,1);chunks=[];total=0;raw=[];sid++;busy=false;on=true;
+ proc.onaudioprocess=e=>{const c=new Float32Array(e.inputBuffer.getChannelData(0));chunks.push(c);total+=c.length};
+ src.connect(proc);proc.connect(ctx.destination);
+ $('btn').textContent='وقّف التسجيل';$('btn').className='rec';$('st').textContent='غنّي… بحتاج حوالي ٨ ثواني للتحليل الأول';
+ $('list').innerHTML='<div class="empty">بستمع لك…</div>';
+ const buf=new Float32Array(2048);
+ t1=setInterval(()=>{an.getFloatTimeDomainData(buf);const f=detect(buf,sr);
+  if(f>0){const m=69+12*Math.log2(f/440);raw.push(m);const k=Math.round(m);$('nn').textContent=NAMES[((k%12)+12)%12]+(Math.floor(k/12)-1)}else{raw.push(null);$('nn').textContent='—'}draw()},50);
+ t2=setInterval(()=>{if(total/sr>=8)ask(false)},5000)}
+function stop(){on=false;clearInterval(t1);clearInterval(t2);stream.getTracks().forEach(t=>t.stop());proc.disconnect();ctx.close();
+ $('btn').textContent='سجّل من جديد';$('btn').className='';$('nn').textContent='—';
+ if(total/sr<3){$('st').textContent='';$('list').innerHTML='<div class="empty">التسجيل قصير. غنّي ٨ ثواني أو أكثر.</div>';return}
+ ask(true)}
+$('btn').onclick=()=>on?stop():start();
+</script>
+</body>
+</html>
