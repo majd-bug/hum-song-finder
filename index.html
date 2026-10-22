@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>شو الأغنية؟ غنّي وأنا بعرفها</title>
+<title>SINGT</title>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#f4f2fb;--ink:#1d1b3a;--mute:#6b6890;--card:#fff;--line:#dcd8ef;--acc:#d6246e;--accsoft:#fbdbe8}
@@ -20,6 +20,7 @@ canvas{width:100%;height:110px;display:block}
 button{width:100%;font:inherit;font-weight:800;font-size:20px;border:0;border-radius:14px;padding:14px;background:var(--acc);color:#fff;cursor:pointer}
 button.rec{background:var(--ink);color:var(--bg)}
 button:focus-visible,a:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+#ig{color:var(--acc);font-size:14px;font-weight:700;min-height:1.4em;margin:2px 2px 0}
 #st{margin:14px 2px 0;color:var(--mute);font-size:15px;min-height:1.6em}
 h2{font-size:18px;margin:22px 0 10px}
 ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
@@ -37,12 +38,13 @@ li:first-child{border-color:var(--acc)}
 <body>
 <main>
 <h1>غنّي، وأنا بعرف الأغنية</h1>
-<p class="sub">اضغط تسجيل ودندن أو غنّي مقطع من أي أغنية، عربي أو أجنبي. الأفضل 10 ثواني أو أكثر.</p>
+<p class="sub">اضغط تسجيل ودندن (همهمة) أو صفّر أو غنّي مقطع من أي أغنية، عربي أو أجنبي. الكلمات مش ضرورية، الأفضل 10 إلى 15 ثانية بنغمات واضحة.</p>
 <div class="stage">
   <canvas id="cv" width="520" height="110" aria-label="خط طبقة الصوت"></canvas>
   <div class="note"><span>النغمة الحالية</span><b id="nn">—</b></div>
   <button id="btn" type="button">ابدأ التسجيل</button>
   <div id="st" aria-live="polite"></div>
+  <div id="ig" aria-live="polite"></div>
 </div>
 <h2 id="ttl">أقرب ٥ أغاني</h2>
 <ol id="list" aria-live="polite"><div class="empty">ابدأ الغناء وبتظهر النتائج هون</div></ol>
@@ -51,23 +53,43 @@ li:first-child{border-color:var(--acc)}
 const $=id=>document.getElementById(id),cv=$('cv'),cx=cv.getContext('2d');
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-let ctx,stream,an,proc,chunks=[],total=0,raw=[],on=false,sid=0,busy=false,t1,t2,sr=44100;
+let ctx,stream,an,proc,chunks=[],raw=[],on=false,sid=0,busy=false,t1,t2,sr=44100,lastMx=0,fq,prof=null,calib=[],curOk=false,hang=0,ignUntil=0;
+const med=a=>{const b=[...a].sort((x,y)=>x-y);return b[b.length>>1]};
 
-function detect(buf,s){let e=0;for(let i=0;i<buf.length;i++)e+=buf[i]*buf[i];if(Math.sqrt(e/buf.length)<0.012)return -1;
- const n=buf.length,lo=Math.floor(s/1000),hi=Math.floor(s/80),r=new Float32Array(hi+2);let mx=0;
+function detect(buf,s){let e=0;for(let i=0;i<buf.length;i++)e+=buf[i]*buf[i];if(Math.sqrt(e/buf.length)<0.006){lastMx=0;return -1}
+ const n=buf.length,lo=Math.floor(s/2500),hi=Math.floor(s/80),r=new Float32Array(hi+2);let mx=0;
  for(let l=lo;l<=hi;l++){let a=0,b=0,c=0;for(let i=0;i<n-l;i++){a+=buf[i]*buf[i+l];b+=buf[i]*buf[i];c+=buf[i+l]*buf[i+l]}r[l]=2*a/(b+c+1e-9);if(r[l]>mx)mx=r[l]}
- if(mx<0.6)return -1;for(let l=lo+1;l<hi;l++){if(r[l]>=0.9*mx&&r[l]>=r[l-1]&&r[l]>=r[l+1])return s/l}return -1}
+ lastMx=mx;if(mx<0.6)return -1;for(let l=lo+1;l<hi;l++){if(r[l]>=0.9*mx&&r[l]>=r[l-1]&&r[l]>=r[l+1])return s/l}return -1}
 function draw(){const w=cv.width,h=cv.height,css=getComputedStyle(document.documentElement);cx.clearRect(0,0,w,h);
  cx.strokeStyle=css.getPropertyValue('--line');for(let i=1;i<4;i++){cx.beginPath();cx.moveTo(0,h*i/4);cx.lineTo(w,h*i/4);cx.stroke()}
  const v=raw.slice(-160),ok=v.filter(x=>x!==null);if(ok.length<2)return;const mn=Math.min(...ok)-2,rg=Math.max(12,Math.max(...ok)+2-mn);
  cx.strokeStyle=css.getPropertyValue('--acc');cx.lineWidth=3;cx.lineJoin='round';cx.beginPath();let pen=false;
  v.forEach((x,i)=>{if(x===null){pen=false;return}const X=w-(v.length-1-i)*(w/160),Y=h-6-(x-mn)/rg*(h-12);pen?cx.lineTo(X,Y):cx.moveTo(X,Y);pen=true});cx.stroke()}
 
-function wav(sec){const need=Math.min(total,Math.floor(sec*sr));let got=0;const part=[];
- for(let i=chunks.length-1;i>=0&&got<need;i--){part.unshift(chunks[i]);got+=chunks[i].length}
+function centroid(){const bw=sr/2048,a=Math.ceil(80/bw),b=Math.min(fq.length,Math.floor(4000/bw));let s=0,w=0;for(let i=a;i<b;i++){const m=Math.pow(10,fq[i]/20);s+=m*i*bw;w+=m}return w?s/w:0}
+function accepted(){const f=chunks.map(c=>c.ok),n=f.length;
+ for(let i=0;i<n;){if(!f[i]){let j=i;while(j<n&&!f[j])j++;if(i>0&&j<n&&j-i<=2)for(let k=i;k<j;k++)f[k]=true;i=j}else i++}
+ for(let i=0;i<n;){if(f[i]){let j=i;while(j<n&&f[j])j++;if(j-i<3)for(let k=i;k<j;k++)f[k]=false;i=j}else i++}
+ return chunks.filter((_,i)=>f[i]).map(c=>c.d)}
+const accSecs=()=>accepted().reduce((a,c)=>a+c.length,0)/sr;
+function tick(buf){an.getFloatTimeDomainData(buf);an.getFloatFrequencyData(fq);
+ let e=0;for(let i=0;i<buf.length;i++)e+=buf[i]*buf[i];const rms=Math.sqrt(e/buf.length);
+ const f=detect(buf,sr);let ok=false,m=null;
+ if(f>0){m=69+12*Math.log2(f/440);
+  if(lastMx>=0.75){const c=centroid();
+   if(!prof){calib.push({m,c,r:rms});ok=true;if(calib.length>=20)prof={m:med(calib.map(x=>x.m)),c:med(calib.map(x=>x.c)),r:med(calib.map(x=>x.r))}}
+   else{ok=Math.abs(m-prof.m)<=14&&Math.abs(Math.log(c/prof.c))<0.5&&rms>=prof.r*0.3;
+    if(ok){prof.m+=0.02*(m-prof.m);prof.c*=Math.pow(c/prof.c,0.02);prof.r+=0.02*(rms-prof.r)}else ignUntil=Date.now()+1500}}}
+ hang=ok?3:Math.max(0,hang-1);curOk=ok||hang>0;
+ raw.push(ok?m:null);
+ if(ok){const k=Math.round(m);$('nn').textContent=NAMES[((k%12)+12)%12]+(Math.floor(k/12)-1)}else $('nn').textContent='—';
+ $('ig').textContent=Date.now()<ignUntil?'تجاهلت صوت مختلف عن صوتك':(!prof&&raw.length>80&&calib.length<5?'ما سمعت نغمة واضحة. قرّب من الميكروفون ودندن أو صفّر بنغمات ثابتة':'');draw()}
+function wav(sec){const acc=accepted(),tot=acc.reduce((a,c)=>a+c.length,0),need=Math.min(tot,Math.floor(sec*sr));let got=0;const part=[];
+ for(let i=acc.length-1;i>=0&&got<need;i--){part.unshift(acc[i]);got+=acc[i].length}
  const all=new Float32Array(got);let o=0;part.forEach(c=>{all.set(c,o);o+=c.length});
  const src=all.subarray(Math.max(0,got-need)),r=sr/16000,n=Math.floor(src.length/r),pcm=new Int16Array(n);
- for(let i=0;i<n;i++){const a=Math.floor(i*r),b=Math.max(a+1,Math.floor((i+1)*r));let s=0;for(let j=a;j<b;j++)s+=src[j];s/=(b-a);pcm[i]=Math.max(-1,Math.min(1,s))*32767}
+ let q=0;for(let i=0;i<src.length;i++)q+=src[i]*src[i];const rm=Math.sqrt(q/Math.max(1,src.length)),g=rm>0?Math.min(10,0.15/rm):1;
+ for(let i=0;i<n;i++){const a=Math.floor(i*r),b=Math.max(a+1,Math.floor((i+1)*r));let s=0;for(let j=a;j<b;j++)s+=src[j];s=s/(b-a)*g;pcm[i]=Math.max(-1,Math.min(1,s))*32767}
  const buf=new ArrayBuffer(44+n*2),d=new DataView(buf),W=(p,t)=>{for(let i=0;i<t.length;i++)d.setUint8(p+i,t.charCodeAt(i))};
  W(0,'RIFF');d.setUint32(4,36+n*2,true);W(8,'WAVE');W(12,'fmt ');d.setUint32(16,16,true);d.setUint16(20,1,true);d.setUint16(22,1,true);
  d.setUint32(24,16000,true);d.setUint32(28,32000,true);d.setUint16(32,2,true);d.setUint16(34,16,true);W(36,'data');d.setUint32(40,n*2,true);
@@ -77,7 +99,7 @@ function render(list,final){$('ttl').textContent=final?'النتيجة النه�
  $('list').innerHTML=list.map(s=>{const l=[['Spotify',s.spotify],['YouTube',s.youtube],['Deezer',s.deezer]].filter(x=>x[1]).map(x=>`<a href="${x[1]}" target="_blank" rel="noopener">${x[0]}</a>`).join('');
  return `<li><div class="bar" style="width:${s.score}%"></div><span><span class="t">${esc(s.title)}</span><span class="e">${esc(s.artist)}</span></span><span class="r"><span class="p">${s.score}%</span>${l}</span></li>`}).join('')}
 async function ask(final){if(busy&&!final)return;const my=sid;busy=true;$('st').textContent=final?'جاري تحليل التسجيل كامل…':'جاري التحليل…';
- try{const r=await fetch('/api/identify',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:wav(final?20:15)});const j=await r.json();
+ try{const r=await fetch('/api/identify',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:wav(final?25:15)});const j=await r.json();
   if(my!==sid||(!final&&!on))return;
   if(j.error){$('st').textContent=j.error;return}
   if(j.results.length){render(j.results,final);$('st').textContent=on?'مستمر بالاستماع… كمّل غناء':''}
@@ -91,18 +113,17 @@ async function start(){
  catch(e){$('st').textContent='الميكروفون ممنوع. اسمح له من أيقونة القفل بجنب الرابط وجرّب مرة ثانية ('+e.name+')';return}
  ctx=new (window.AudioContext||window.webkitAudioContext)();sr=ctx.sampleRate;
  const src=ctx.createMediaStreamSource(stream);an=ctx.createAnalyser();an.fftSize=2048;src.connect(an);
- proc=ctx.createScriptProcessor(4096,1,1);chunks=[];total=0;raw=[];sid++;busy=false;on=true;
- proc.onaudioprocess=e=>{const c=new Float32Array(e.inputBuffer.getChannelData(0));chunks.push(c);total+=c.length};
+ proc=ctx.createScriptProcessor(4096,1,1);fq=new Float32Array(an.frequencyBinCount);chunks=[];raw=[];prof=null;calib=[];curOk=false;hang=0;ignUntil=0;sid++;busy=false;on=true;
+ proc.onaudioprocess=e=>{chunks.push({d:new Float32Array(e.inputBuffer.getChannelData(0)),ok:curOk})};
  src.connect(proc);proc.connect(ctx.destination);
- $('btn').textContent='وقّف التسجيل';$('btn').className='rec';$('st').textContent='غنّي… بحتاج حوالي ٨ ثواني للتحليل الأول';
+ $('btn').textContent='وقّف التسجيل';$('btn').className='rec';$('st').textContent='دندن أو صفّر… أول ثانيتين بتحدد صوتك، وبعدها بتجاهل أي صوت غريب';
  $('list').innerHTML='<div class="empty">بستمع لك…</div>';
  const buf=new Float32Array(2048);
- t1=setInterval(()=>{an.getFloatTimeDomainData(buf);const f=detect(buf,sr);
-  if(f>0){const m=69+12*Math.log2(f/440);raw.push(m);const k=Math.round(m);$('nn').textContent=NAMES[((k%12)+12)%12]+(Math.floor(k/12)-1)}else{raw.push(null);$('nn').textContent='—'}draw()},50);
- t2=setInterval(()=>{if(total/sr>=8)ask(false)},5000)}
+ t1=setInterval(()=>tick(buf),50);
+ t2=setInterval(()=>{if(accSecs()>=6)ask(false)},5000)}
 function stop(){on=false;clearInterval(t1);clearInterval(t2);stream.getTracks().forEach(t=>t.stop());proc.disconnect();ctx.close();
- $('btn').textContent='سجّل من جديد';$('btn').className='';$('nn').textContent='—';
- if(total/sr<3){$('st').textContent='';$('list').innerHTML='<div class="empty">التسجيل قصير. غنّي ٨ ثواني أو أكثر.</div>';return}
+ $('btn').textContent='سجّل من جديد';$('btn').className='';$('nn').textContent='—';$('ig').textContent='';
+ if(accSecs()<3){$('st').textContent='';$('list').innerHTML='<div class="empty">ما سمعت غناء كافي (الأصوات الغريبة اتجاهلت). غنّي ٨ ثواني أو أكثر.</div>';return}
  ask(true)}
 $('btn').onclick=()=>on?stop():start();
 </script>
